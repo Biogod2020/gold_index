@@ -101,9 +101,14 @@ def hierarchical_sample(
     Returns:
         A new AnnData object containing the sampled cells.
     """
+    import anndata as ad
+    import pandas as pd
+    import numpy as np
     from sklearn.utils import check_random_state
-
-    if (n_samples is not None and fraction is not None) or (n_samples is None and fraction is None):
+    
+    if (n_samples is not None and fraction is not None) or (
+        n_samples is None and fraction is None
+    ):
         raise ValueError("Must specify exactly one of 'n_samples' or 'fraction'.")
 
     rng = check_random_state(random_state)
@@ -111,6 +116,7 @@ def hierarchical_sample(
     def _sample_group(group: pd.DataFrame, level: int) -> pd.DataFrame:
         """Recursively samples from each group."""
         if level == len(groupby_cols) - 1:
+            # Sample at the final level
             if fraction is not None:
                 return group.sample(frac=fraction, random_state=rng)
             elif isinstance(n_samples, int):
@@ -118,7 +124,14 @@ def hierarchical_sample(
             elif isinstance(n_samples, float):
                 return group.sample(frac=n_samples, random_state=rng)
         else:
-            return group.groupby(groupby_cols[level + 1]).apply(lambda x: _sample_group(x, level + 1))
+            # Group by the next level and sample recursively
+            return group.groupby(groupby_cols[level + 1], group_keys=False, observed=False).apply(
+                lambda x: _sample_group(x, level + 1)
+            )
 
+    # Starting the hierarchical sampling from the top level
     sampled_obs = _sample_group(adata.obs, level=0)
-    return adata[sampled_obs.index, :].copy()
+    sampled_obs_index = sampled_obs.index.get_level_values(-1) if isinstance(sampled_obs.index, pd.MultiIndex) else sampled_obs.index
+
+    return adata[sampled_obs_index, :].copy()
+
