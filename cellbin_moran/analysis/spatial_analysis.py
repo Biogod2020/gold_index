@@ -79,6 +79,8 @@ def concatenate_and_intersect(
     concatenated_adata = ad.concat(filtered_adatas, axis=0, join='outer', merge='same', label=key)
     return concatenated_adata
 
+
+
 def hierarchical_sample(
     adata: ad.AnnData,
     groupby_cols: list[str],
@@ -120,7 +122,8 @@ def hierarchical_sample(
             if fraction is not None:
                 return group.sample(frac=fraction, random_state=rng)
             elif isinstance(n_samples, int):
-                return group.sample(n=n_samples, random_state=rng)
+                n_to_sample = min(n_samples, len(group))
+                return group.sample(n=n_to_sample, random_state=rng)
             elif isinstance(n_samples, float):
                 return group.sample(frac=n_samples, random_state=rng)
         else:
