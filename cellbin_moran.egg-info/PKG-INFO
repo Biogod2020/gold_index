@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: cellbin_moran
+Version: 0.1.0
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: scanpy
+Requires-Dist: squidpy
