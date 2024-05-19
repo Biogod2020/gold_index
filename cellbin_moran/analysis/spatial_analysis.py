@@ -138,3 +138,30 @@ def hierarchical_sample(
 
     return adata[sampled_obs_index, :].copy()
 
+
+def subset_anndata(
+    adata: 'anndata.AnnData', 
+    conditions: dict
+) -> 'anndata.AnnData':
+    """
+    Subsets the AnnData object to only include cells where the `.obs` column values match specified conditions.
+
+    Args:
+        adata: The AnnData object to subset.
+        conditions: A dictionary where keys are column names from `adata.obs` and values are the values to match in those columns.
+
+    Returns:
+        A new AnnData object containing only the cells that match all specified conditions.
+    """
+    import anndata as ad
+    import pandas as pd
+    
+    # Start with a boolean mask that includes all cells
+    mask = pd.Series([True] * adata.shape[0], index=adata.obs.index)
+    
+    # Apply each condition to the mask
+    for column, value in conditions.items():
+        mask &= adata.obs[column] == value
+    
+    # Subset the AnnData object using the mask
+    return adata[mask, :].copy()
