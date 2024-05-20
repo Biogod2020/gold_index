@@ -1,27 +1,39 @@
 # cellbin_moran/io/file_operations.py
 
 import os
+import re
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from typing import Dict
 
-def list_files_matching_criteria(directory: str, criteria: str, separator: str = "_") -> dict:
+def list_files_matching_criteria(directory: str, condition: str = None, regex: str = None, separator: str = "_") -> dict:
     """
-    Lists files in a directory matching a given criteria.
+    Lists files in a directory matching a given condition or regular expression.
 
     Args:
         directory: The directory to search for files.
-        criteria: The criteria to filter files by.
+        condition: The conditional equation to filter files by. The condition should be a valid Python expression
+                   where 'file' can be used as the variable.
+        regex: The regular expression to filter files by.
         separator: The separator used to split the filenames.
 
     Returns:
         A dictionary where the keys are the prefixes of the filenames split by the separator
-        and the values are the full file paths of the files that match the criteria.
+        and the values are the full file paths of the files that match the condition or regex.
     """
     files = sorted(os.listdir(directory))
     paths = {file.split(separator)[0]: os.path.join(directory, file) for file in files}
-    filtered_paths = {file: path for file, path in paths.items() if criteria in file}
+    
+    if condition:
+        filtered_paths = {file: path for file, path in paths.items() if eval(condition)}
+    elif regex:
+        pattern = re.compile(regex)
+        filtered_paths = {file: path for file, path in paths.items() if pattern.search(file)}
+    else:
+        filtered_paths = paths
+    
     return filtered_paths
+
 
 def load_data_in_parallel(file_paths: dict, load_function: callable) -> dict:
     """
