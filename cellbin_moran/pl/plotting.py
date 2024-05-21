@@ -17,7 +17,7 @@ def plot_normalized_umap(
         slide: Dictionary where keys are identifiers and values are AnnData objects.
         num_rows: Number of rows in the subplot grid.
         num_cols: Number of columns in the subplot grid.
-        cell_type: The cell type to filter on for plotting.
+        cell_type: The cell type to filter on for plotting. If None, plot all cells.
         color: The column name in `adata.obs` to normalize and plot.
 
     Returns:
@@ -43,7 +43,12 @@ def plot_normalized_umap(
     for i, (key, adata) in enumerate(slide_items):
         if i >= len(axes):  # Prevent indexing errors if there are more slides than subplots
             break
-        mask = adata.obs["celltype"] == cell_type
+
+        if cell_type:
+            mask = adata.obs["celltype"] == cell_type
+        else:
+            mask = slice(None)  # Select all cells if cell_type is None
+
         adata.obs.loc[mask, f"{color}_normalized"] = normalize(adata.obs.loc[mask, color])
         sc.pl.umap(adata[mask], color=f"{color}_normalized", vmin=0, vmax=1, ax=axes[i], show=False, colorbar_loc=None)
         axes[i].set_title(key.split(sep="_")[0])
@@ -63,6 +68,7 @@ def plot_normalized_umap(
 
     plt.tight_layout(rect=[0, 0, 0.9, 1])  # Adjust layout to make space for the color bar
     return fig
+
 
 def save_figure_to_pdf(fig: plt.Figure, filename: str, dpi: int = 300) -> None:
     """
