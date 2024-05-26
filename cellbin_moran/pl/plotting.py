@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
+import seaborn as sns
 import scanpy as sc
 import numpy as np
+import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
 
 def plot_normalized_umap(
     slide: dict,
@@ -95,3 +98,81 @@ def save_figure_to_pdf(fig: plt.Figure, filename: str, dpi: int = 300) -> None:
     """
     with PdfPages(filename) as pdf:
         fig.savefig(pdf, format='pdf', dpi=dpi)
+
+
+def plot_kde_normalized_distance(
+    pfcdf: pd.DataFrame,
+    cell_type: str = "Micro",
+    dist_col: str = "min_center_dist",
+    fine_col: str = "fine",
+    palette: dict = None,
+    save_path: str = None,
+    fig_size: tuple = (8, 4),
+    dpi: int = 350,
+    scaling_method: str = "standard",  # Parameter to choose the scaling method
+    **kde_kwargs
+) -> plt.Figure:
+    """
+    Plots a KDE of normalized and log-transformed distances for a specific cell type in the DataFrame.
+
+    Args:
+        pfcdf: DataFrame containing the data.
+        cell_type: The cell type to filter on for plotting.
+        dist_col: The column name in `pfcdf` to normalize and plot.
+        fine_col: The column name representing finer categorization to plot separately.
+        palette: Optional dictionary specifying the color palette to use for each `fine` value.
+        save_path: Optional path where the plot should be saved. If None, the plot will not be saved.
+        fig_size: Size of the figure.
+        dpi: Dots per inch for saving the figure.
+        scaling_method: Method to use for scaling ('standard', 'minmax', 'maxabs').
+        **kde_kwargs: Arbitrary keyword arguments to pass to the `sns.kdeplot` function.
+
+    Returns:
+        plt.Figure: The matplotlib figure object.
+    """
+    def scale_values(values, method):
+        if method == "standard":
+            scaler = StandardScaler()
+        elif method == "minmax":
+            scaler = MinMaxScaler()
+        elif method == "maxabs":
+            scaler = MaxAbsScaler()
+        else:
+            raise ValueError("Unsupported scaling method. Choose from 'standard', 'minmax', or 'maxabs'.")
+        return scaler.fit_transform(values.reshape(-1, 1)).flatten()
+    
+    fig, ax = plt.subplots(1, 1, figsize=fig_size)
+
+    mask = (pfcdf["celltype"] == cell_type) & (pfcdf[dist_col] > 0)
+    filtered_data = pfcdf[mask]
+    filtered_data = filtered_data.copy()
+    filtered_data["fine"] = filtered_data[fine_col].astype(str)
+
+    # Scale the distance values
+    filtered_data["dist_scaled"] = scale_values(filtered_data[dist_col].values, scaling_method)
+    filtered_data["Normalized_and_log_transformed_Distance"] = -np.log10(filtered_data["dist_scaled"] + 1e-3)
+    plot_color = "Normalized_and_log_transformed_Distance"
+
+    # Iterate over each unique 'fine' value to plot the KDEs separately
+    for fine_value in filtered_data["fine"].unique():
+        sns.kdeplot(
+            data=filtered_data[filtered_data["fine"] == fine_value],
+            x=plot_color,
+            label=fine_value,
+            ax=ax,
+            color=palette[fine_value] if palette else None,
+            fill=True,
+            alpha=0.3,
+            **kde_kwargs
+        )
+
+    ax.grid(visible=False)
+    ax.legend(title="Cell's Subtypes")  # Add a legend to differentiate KDEs
+
+    # Save the figure only if a save path is provided
+    if save_path:
+        plt.savefig(save_path, dpi=dpi)
+
+    plt.show()
+    
+    return fig
