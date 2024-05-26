@@ -6,6 +6,13 @@ import numpy as np
 import scanpy as sc
 import anndata as ad
 from sklearn.utils import check_random_state
+from scipy.sparse import csr_matrix
+from libpysal.weights import WSP
+from esda.moran import Moran
+from typing import List, Dict
+from anndata import AnnData
+import concurrent.futures
+import warnings
 
 def compute_moranI(
     adata: ad.AnnData, 
@@ -165,3 +172,135 @@ def subset_anndata(
     
     # Subset the AnnData object using the mask
     return adata[mask, :].copy()
+
+
+def neighbor_normalize_and_log_transform(adata: AnnData, value_key: str) -> pd.Series:
+    """
+    Scales the `value_key` column in `adata.obs` by its min and max values, normalizes it to 1e5, and log10 transforms it.
+
+    Args:
+        adata: The AnnData object containing the data.
+        value_key: The key in `adata.obs` containing the values to scale, normalize, and transform.
+    """
+    values = adata.obs[value_key]
+    min_val = values.min()
+    max_val = values.max()
+    
+    # Scale the data
+    scaled_values = (values - min_val) / (max_val - min_val)
+    
+    # Normalize to 1e5 and log10 transform
+    normalized_transformed_values = np.log10((scaled_values * 1e5) + 1)
+    
+    return normalized_transformed_values
+
+
+def neighbor_compute_moran_i(sub_adata: AnnData, value_key: str, category: str) -> dict:
+    """
+    Computes Moran's I spatial autocorrelation for a subset of cells.
+
+    Args:
+        sub_adata: Subset of AnnData object for specific cell type.
+        value_key: The key in `sub_adata.obs` containing the values to analyze.
+        category: The categorical variable in `sub_adata.obs` to group by.
+
+    Returns:
+        A dictionary with Moran's I results.
+    """
+    try:
+        connectivities = sub_adata.obsp['connectivities']
+    except KeyError:
+        raise KeyError(f"Connectivity key 'connectivities' not found in sub_adata.obsp")
+
+    weights = WSP(connectivities)
+    values = sub_adata.obs[value_key].values
+    weights_full = weights.to_W()
+    moran = Moran(values, weights_full)
+    return {
+        category: sub_adata.obs[category].unique()[0],
+        "Moran's I": moran.I,
+        "P-value": moran.p_norm,
+        "num_cell": len(values)
+    }
+
+def neighbor_process_cell_type(adata: AnnData, cell_type: str, value_key: str, category: str) -> pd.DataFrame:
+    """
+    Processes a specific cell type to compute Moran's I.
+
+    Args:
+        adata: The AnnData object to analyze.
+        cell_type: The specific cell type to process.
+        value_key: The key in `adata.obs` containing the values to analyze.
+        category: The categorical variable in `adata.obs` to group by.
+
+    Returns:
+        A DataFrame with Moran's I results for the specific cell type.
+    """
+    mask = adata.obs[category] == cell_type
+    num_cell = sum(mask)
+    if num_cell > 10:
+        sub_adata = adata[mask].copy()
+        moranI_data = neighbor_compute_moran_i(sub_adata, value_key, category)
+        return pd.DataFrame([moranI_data])
+    return pd.DataFrame()
+
+def compute_neighbor_moran_i_by_category(
+    adata: AnnData, 
+    value_key: str, 
+    category: str = "celltype", 
+    connectivity_key: str = 'connectivities'
+) -> pd.DataFrame:
+    """
+    Computes Moran's I spatial autocorrelation for each cell type.
+
+    Args:
+        adata: The AnnData object to analyze.
+        value_key: The key in `adata.obs` containing the values to analyze.
+        category: The categorical variable in `adata.obs` to group by.
+        connectivity_key: The key in `adata.obsp` containing the connectivities matrix.
+
+    Returns:
+        A DataFrame with Moran's I results for each cell type.
+    """
+    top_level_types = adata.obs[category].unique()
+    result_df = pd.DataFrame()
+    data_present = False
+    
+    for cell_type in top_level_types:
+        cell_type_df = neighbor_process_cell_type(adata, cell_type, value_key, category)
+        if not cell_type_df.empty:
+            result_df = pd.concat([result_df, cell_type_df])
+            data_present = True
+    
+    if not data_present:
+        return pd.DataFrame()
+    
+    result_df = result_df.set_index(category)
+    result_df = result_df.sort_values("Moran's I", ascending=False)
+    return result_df
+
+def process_anndata_compute_neighbor_moran_i(
+    adata_path: str, 
+    value_key: str, 
+    category: str, 
+    connectivity_key: str,
+    normalize_log: bool
+) -> pd.DataFrame:
+    """
+    Processes an AnnData object from a file path to compute Moran's I.
+
+    Args:
+        adata_path: The file path to the AnnData object.
+        value_key: The key in `adata.obs` containing the values to analyze.
+        category: The categorical variable in `adata.obs` to group by.
+        connectivity_key: The key in `adata.obsp` containing the connectivities matrix.
+
+    Returns:
+        A DataFrame with Moran's I results for each cell type.
+    """
+    adata = sc.read_h5ad(adata_path)
+    if normalize_log == True:
+        adata.obs[value_key] = neighbor_normalize_and_log_transform(adata, value_key)
+        print(adata.obs[value_key].describe())
+        
+    return compute_neighbor_moran_i_by_category(adata, value_key, category, connectivity_key)
