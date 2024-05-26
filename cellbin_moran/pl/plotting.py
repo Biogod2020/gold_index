@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.backends.backend_pdf import PdfPages
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
+from .palettes import cell_type_colors, general_type_colors, brain_region_colors, age_group_colors
 
 def plot_normalized_umap(
     slide: dict,
@@ -12,7 +13,7 @@ def plot_normalized_umap(
     num_cols: int = 7,
     cell_type: str = "Micro",
     color: str = "min_center_dist",
-    palette: dict = None,
+    palette: dict = cell_type_colors,
     **umap_kwargs
 ) -> plt.Figure:
     """
@@ -105,7 +106,7 @@ def plot_kde_normalized_distance(
     cell_type: str = "Micro",
     dist_col: str = "min_center_dist",
     fine_col: str = "fine",
-    palette: dict = None,
+    palette: dict = cell_type_colors,
     save_path: str = None,
     fig_size: tuple = (8, 4),
     dpi: int = 350,

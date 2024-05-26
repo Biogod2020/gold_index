@@ -1,5 +1,2 @@
-from .plotting import (
-    plot_normalized_umap,
-    save_figure_to_pdf,
-    plot_kde_normalized_distance,
-)
+from .plotting import *  # Import all from plotting.py if necessary
+from .palettes import *  # Import all from palettes.py
