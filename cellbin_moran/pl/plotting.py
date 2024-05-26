@@ -63,7 +63,8 @@ def plot_normalized_umap(
         else:
             plot_color = color
 
-        sc.pl.umap(tmp[mask], color=plot_color, vmin=0, vmax=1 if color == "min_center_dist" else None, ax=axes[i], show=False, colorbar_loc=None, legend_loc=leg_stat, palette=palette, **umap_kwargs)
+        sc.pl.umap(tmp[mask], color=plot_color, vmin=0, vmax=1 if color == "min_center_dist" else None, 
+                   ax=axes[i], show=False, colorbar_loc=None, legend_loc=leg_stat, palette=palette, **umap_kwargs)
         axes[i].set_title(key.split(sep="_")[0])
         for pos in ['top', 'bottom', 'left']:
             axes[i].spines[pos].set_visible(False)
