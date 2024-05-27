@@ -69,7 +69,14 @@ brain_region_colors = {
     'PFC': '#CC0025',
     'RS': '#FF6F80',
     'STR': '#009909',
-    'TH': '#25ADFF'
+    'TH': '#25ADFF',
+    "Basal forebrain": "#341FCC",
+    "Entorhinal area": "#992D6A",
+    "Hippocampal formation": "#D974E8",
+    "Prefrontal cortex": "#CC0025",
+    "Retrosplenial area": "#FF6F80",
+    "Striatum": "#009909",
+    "Thalamus": "#25ADFF"
 }
 
 age_group_colors = {
