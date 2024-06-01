@@ -101,6 +101,12 @@ def save_figure_to_pdf(fig: plt.Figure, filename: str, dpi: int = 300) -> None:
         fig.savefig(pdf, format='pdf', dpi=dpi)
 
 
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
+
 def plot_kde_normalized_distance(
     pfcdf: pd.DataFrame,
     cell_type: str = "Micro",
@@ -111,8 +117,9 @@ def plot_kde_normalized_distance(
     fig_size: tuple = (8, 4),
     dpi: int = 350,
     scaling_method: str = "standard",  # Parameter to choose the scaling method
+    ax: plt.Axes = None,
     **kde_kwargs
-) -> plt.Figure:
+) -> plt.Axes:
     """
     Plots a KDE of normalized and log-transformed distances for a specific cell type in the DataFrame.
 
@@ -126,10 +133,11 @@ def plot_kde_normalized_distance(
         fig_size: Size of the figure.
         dpi: Dots per inch for saving the figure.
         scaling_method: Method to use for scaling ('standard', 'minmax', 'maxabs').
+        ax: Optional matplotlib axis object to draw on. If None, a new figure and axis will be created.
         **kde_kwargs: Arbitrary keyword arguments to pass to the `sns.kdeplot` function.
 
     Returns:
-        plt.Figure: The matplotlib figure object.
+        plt.Axes: The matplotlib axis object used for plotting.
     """
     def scale_values(values, method):
         if method == "standard":
@@ -142,8 +150,11 @@ def plot_kde_normalized_distance(
             raise ValueError("Unsupported scaling method. Choose from 'standard', 'minmax', or 'maxabs'.")
         return scaler.fit_transform(values.reshape(-1, 1)).flatten()
     
-    fig, ax = plt.subplots(1, 1, figsize=fig_size)
-
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=fig_size)
+    else:
+        fig = ax.figure
+        
     mask = (pfcdf["celltype"] == cell_type) & (pfcdf[dist_col] > 0)
     filtered_data = pfcdf[mask]
     filtered_data = filtered_data.copy()
@@ -151,8 +162,8 @@ def plot_kde_normalized_distance(
 
     # Scale the distance values
     filtered_data["dist_scaled"] = scale_values(filtered_data[dist_col].values, scaling_method)
-    filtered_data["Normalized_and_log_transformed_Distance"] = -np.log10(filtered_data["dist_scaled"] + 1e-3)
-    plot_color = "Normalized_and_log_transformed_Distance"
+    filtered_data["Normalized and -log10 transformed distance"] = -np.log10(filtered_data["dist_scaled"] + 1e-3)
+    plot_color = "Normalized and -log10 transformed distance"
 
     # Iterate over each unique 'fine' value to plot the KDEs separately
     for fine_value in filtered_data["fine"].unique():
@@ -176,4 +187,4 @@ def plot_kde_normalized_distance(
 
     plt.show()
     
-    return fig
+    return ax
