@@ -106,6 +106,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, MaxAbsScaler
+import numpy as np
 
 def plot_kde_normalized_distance(
     pfcdf: pd.DataFrame,
@@ -225,7 +226,6 @@ def plot_genes_in_spatial(
     Returns:
         plt.Figure: The matplotlib figure object used for plotting.
     """
-    import numpy as np
 
     # Determine sample IDs if not provided
     if sample_ids is None:
@@ -263,24 +263,27 @@ def plot_genes_in_spatial(
             vmax = 5
         for j, sample_id in enumerate(sample_ids):
             ax = axs[i, j] if n_genes > 1 and n_samples > 1 else (axs[j] if n_genes == 1 else axs[i])
-            if isinstance(adata_input, dict):
-                adata_sample = adata_input[sample_id]
-            else:
-                adata_sample = adata_input[adata_input.obs[sample_col] == sample_id]
+            try:
+                if isinstance(adata_input, dict):
+                    adata_sample = adata_input[sample_id]
+                else:
+                    adata_sample = adata_input[adata_input.obs[sample_col] == sample_id]
 
-            sc.pl.embedding(
-                adata_sample,
-                basis=embedding_basis,
-                ax=ax,
-                color=gene,
-                size=size,
-                show=False,
-                vmin=0,
-                vmax=vmax,
-                **kwargs
-            )
-            ax.set_title(f"{sample_id}_{gene}")
-            ax.set_aspect('equal', adjustable='box')
+                sc.pl.embedding(
+                    adata_sample,
+                    basis=embedding_basis,
+                    ax=ax,
+                    color=gene,
+                    size=size,
+                    show=False,
+                    vmin=0,
+                    vmax=vmax,
+                    **kwargs
+                )
+                ax.set_title(f"{sample_id}_{gene}")
+                ax.set_aspect('equal', adjustable='box')
+            except Exception as e:
+                print(f"Error plotting {gene} for sample {sample_id}: {str(e)}")
 
     plt.tight_layout()
 
