@@ -6,9 +6,12 @@ import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from typing import Dict
 
-def list_files_matching_criteria(directory: str, condition: str = None, regex: str = None, separator: str = "_") -> dict:
+import os
+import re
+
+def list_files_matching_criteria(directory: str, condition: str = None, regex: str = None, separator: str = "_", id_index: int = 0) -> dict:
     """
-    Lists files in a directory matching a given condition or regular expression.
+    Lists files in a directory matching a given condition or regular expression and extracts an ID from the filename.
 
     Args:
         directory: The directory to search for files.
@@ -16,23 +19,30 @@ def list_files_matching_criteria(directory: str, condition: str = None, regex: s
                    where 'file' can be used as the variable.
         regex: The regular expression to filter files by.
         separator: The separator used to split the filenames.
+        id_index: The index of the split result to be used as the dictionary key.
 
     Returns:
-        A dictionary where the keys are the prefixes of the filenames split by the separator
+        A dictionary where the keys are the specified parts of the filenames (split by the separator)
         and the values are the full file paths of the files that match the condition or regex.
     """
     files = sorted(os.listdir(directory))
-    paths = {file.split(separator)[0]: os.path.join(directory, file) for file in files}
-    
+
+    # Filter files based on condition or regex
     if condition:
-        filtered_paths = {file: path for file, path in paths.items() if eval(condition)}
+        filtered_files = [file for file in files if eval(condition)]
     elif regex:
         pattern = re.compile(regex)
-        filtered_paths = {file: path for file, path in paths.items() if pattern.search(file)}
+        filtered_files = [file for file in files if pattern.search(file)]
     else:
-        filtered_paths = paths
+        filtered_files = files
+
+
+    # Create the dictionary with the specified part of the filenames as keys
+    paths = {file.split(separator)[id_index]: os.path.join(directory, file) for file in filtered_files}
     
-    return filtered_paths
+    return paths
+
+
 
 
 def load_data_in_parallel(file_paths: dict, load_function: callable) -> dict:
