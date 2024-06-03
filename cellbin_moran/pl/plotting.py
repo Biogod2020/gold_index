@@ -190,6 +190,49 @@ def plot_kde_normalized_distance(
     
     return ax
 
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+import scanpy as sc
+
+def calculate_pca(
+    adata,
+    genes: list,
+    n_components: int = 2,
+    scale: bool = True,
+    verbose: bool = True
+) -> np.ndarray:
+    """
+    Calculates PCA for the specified genes in the AnnData object.
+
+    Args:
+        adata: AnnData object containing the data.
+        genes: List of genes to use for PCA calculation.
+        n_components: Number of principal components to compute. Default is 2.
+        scale: Whether to scale the data before PCA. Default is True.
+        verbose: Whether to print additional information. Default is False.
+
+    Returns:
+        np.ndarray: PCA result for the specified genes.
+    """
+
+    if scale:
+        sc.pp.scale(adata, zero_center=True)
+
+    available_genes = [gene for gene in genes if gene in adata.var_names]
+    missing_genes = set(genes) - set(available_genes)
+    if missing_genes:
+        print(f"The following genes are missing in the data and will be ignored: {missing_genes}")
+
+    gene_data = adata[:, available_genes].X
+    pca = PCA(n_components=n_components)
+    pca_result = pca.fit_transform(gene_data)
+
+    if verbose:
+        print(f"Explained variance ratio: {pca.explained_variance_ratio_}")
+
+    return pca_result
+
 def plot_genes_in_spatial(
     adata_input,
     sample_ids: list = None,
@@ -205,10 +248,14 @@ def plot_genes_in_spatial(
     size: int = 6,
     save_path: str = None,
     dpi: int = 350,
+    calc_pca: bool = False,
+    pca_params: dict = None,
+    n_pcs_to_plot: int = 2,
     **kwargs
 ) -> plt.Figure:
     """
     Plots spatial embeddings for a list of neuronal soma genes across multiple samples.
+    Optionally includes PCA calculation for the provided genes using sklearn to avoid modifying anndata.
 
     Args:
         adata_input: Either an AnnData object or a dictionary of AnnData objects.
@@ -221,6 +268,9 @@ def plot_genes_in_spatial(
         size: Size of the points in the plot.
         save_path: Optional path where the plot should be saved. If None, the plot will not be saved.
         dpi: Dots per inch for saving the figure.
+        calc_pca: Boolean flag to calculate PCA.
+        pca_params: Dictionary of parameters for the calculate_pca function.
+        n_pcs_to_plot: Number of principal components to plot. Default is 2.
         **kwargs: Additional keyword arguments to pass to `sc.pl.embedding`.
 
     Returns:
@@ -250,11 +300,28 @@ def plot_genes_in_spatial(
             if all_values:
                 top_5_percent_values[gene] = np.percentile(all_values, cut_off)
 
+    # Ensure PCA is computed for the genes if requested
+    if calc_pca:
+        if pca_params is None:
+            pca_params = {}
+        pca_params.update({'n_components': n_pcs_to_plot})
+        if isinstance(adata_input, dict):
+            for adata in adata_input.values():
+                adata.obsm['X_pca'] = calculate_pca(adata, genes, **pca_params)
+                for i in range(n_pcs_to_plot):
+                    adata.obs[f"pc_{i}"] = adata.obsm['X_pca'][:, i] 
+        else:
+            adata_input.obsm['X_pca'] = calculate_pca(adata_input, genes, **pca_params)
+            adata_input.obs[f"pc_{i}"] = adata_input.obsm['X_pca'][:, i]
+
     n_genes = len(genes)
     n_samples = len(sample_ids)
 
     fig_size = (fig_size_per_gene[0] * n_samples, fig_size_per_gene[1] * n_genes)
     fig, axs = plt.subplots(n_genes, n_samples, figsize=fig_size)
+
+    if calc_pca:
+        genes = [f"pc_{i}" for i in range(n_pcs_to_plot)]
 
     for i, gene in enumerate(genes):
         if cut_off:
@@ -268,6 +335,7 @@ def plot_genes_in_spatial(
                     adata_sample = adata_input[sample_id]
                 else:
                     adata_sample = adata_input[adata_input.obs[sample_col] == sample_id]
+
 
                 sc.pl.embedding(
                     adata_sample,
