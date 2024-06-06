@@ -65,6 +65,7 @@ general_type_colors = {
 brain_region_colors = {
     'BF': '#341FCC',
     'ENT': '#992D6A',
+    'ECT': '#992D6A',
     'HPF': '#D974E8',
     'PFC': '#CC0025',
     'RS': '#FF6F80',
@@ -72,6 +73,7 @@ brain_region_colors = {
     'TH': '#25ADFF',
     "Basal forebrain": "#341FCC",
     "Entorhinal area": "#992D6A",
+    "Ectorhinal area": "#992D6A",
     "Hippocampal formation": "#D974E8",
     "Prefrontal cortex": "#CC0025",
     "Retrosplenial area": "#FF6F80",

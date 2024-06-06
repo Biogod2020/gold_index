@@ -1,119 +1,123 @@
-import os
-
-# Define the content for plotting.py
-plotting_code = '''\
-import matplotlib.pyplot as plt
 import scanpy as sc
+
+import cellbin_moran as cm
+
+import anndata as ad
+import pandas as pd
 import numpy as np
-from matplotlib.backends.backend_pdf import PdfPages
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-def plot_normalized_umap(
-    slide: dict,
-    num_rows: int = 1,
-    num_cols: int = 7,
-    cell_type: str = "Micro",
-    color: str = "min_center_dist"
-) -> plt.Figure:
-    """
-    Plots a grid of UMAP projections with normalized values for each AnnData object in 'slide'.
+region = "PFC"
 
-    Args:
-        slide: Dictionary where keys are identifiers and values are AnnData objects.
-        num_rows: Number of rows in the subplot grid.
-        num_cols: Number of columns in the subplot grid.
-        cell_type: The cell type to filter on for plotting.
-        color: The column name in `adata.obs` to normalize and plot.
+ref_pfc = cm.load_sct_and_set_index(f"/home1/jijh/st_project/cellbin_analysis/annotated_cell_bins/sn_sct_h5ad/{region}_sct_counts.h5ad")
+ref_pfc_sub = cm.analysis.hierarchical_sample(ref_pfc, groupby_cols=["sample", "celltype"], n_samples=10000, random_state=1)
+ref_pfc_sub = ref_pfc_sub.raw.to_adata()
 
-    Returns:
-        plt.Figure: The matplotlib figure object.
-    """
-    def normalize(values):
-        min_val = values.min()
-        max_val = values.max()
-        return (values - min_val) / (max_val - min_val)
+ref_pfc_sub.obs["celltype"] = ref_pfc_sub.obs["fine"].str.split("-").str[0]
+ref_pfc_sub.obs.groupby("celltype").count()
 
-    # Determine the number of subplots needed
-    num_plots = len(slide)
+# Reusing the previously defined functions:
+cellbin_dir = "/public/home/jijh/st_project/cellbin_analysis/annotated_cell_bins/sct_cellbin_h5ad"
+meta_dir = "/public/home/jijh/st_project/cellbin_analysis/annotated_cell_bins/region_meta/"
 
-    # Create a grid of subplots
-    fig, axes = plt.subplots(num_rows, num_cols, figsize=(num_cols * 4, num_rows * 4), gridspec_kw={'width_ratios': [1] * num_cols})
-    axes = axes.flatten()  # Flatten the array to easily iterate through it
 
-    # Rearrange the slide items to start with the second key and put the first key last
-    slide_items = list(slide.items())
-    slide_items = slide_items[1:] + slide_items[:1]
+metas = cm.io.read_and_process_metadata(meta_dir, criteria=f"'csv' in file")
 
-    # Plot each adata in the appropriate subplot
-    for i, (key, adata) in enumerate(slide_items):
-        if i >= len(axes):  # Prevent indexing errors if there are more slides than subplots
-            break
-        mask = adata.obs["celltype"] == cell_type
-        adata.obs.loc[mask, f"{color}_normalized"] = normalize(adata.obs.loc[mask, color])
-        sc.pl.umap(adata[mask], color=f"{color}_normalized", vmin=0, vmax=1, ax=axes[i], show=False, colorbar_loc=None)
-        axes[i].set_title(key.split(sep="_")[0])
-        for pos in ['right', 'top', 'bottom', 'left']:
-            axes[i].spines[pos].set_visible(False)
-        axes[i].set_xlabel("")
-        axes[i].set_ylabel("")
+sample = cm.list_files_matching_criteria(cellbin_dir, condition=f"'h5ad' in file")
 
-    # Add an axis for the color bar on the right border if color is numerical
-    if np.issubdtype(adata.obs[color].dtype, np.number):
-        cbar_ax = fig.add_axes([0.92, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
-        norm = plt.Normalize(vmin=0, vmax=1)
-        sm = plt.cm.ScalarMappable(cmap="viridis", norm=norm)
-        sm.set_array([])
-        cbar = fig.colorbar(sm, cax=cbar_ax)
-        cbar.set_label(f'{color}_normalized')
+cellbin_data = cm.load_data_in_parallel(sample, cm.load_sct_and_set_index)
 
-    plt.tight_layout(rect=[0, 0, 0.9, 1])  # Adjust layout to make space for the color bar
-    return fig
+for key in cellbin_data.keys():
+    cellbin_data[key] = cellbin_data[key].raw.to_adata()
+    cellbin_data[key].obs = metas[key]
 
-def save_figure_to_pdf(fig: plt.Figure, filename: str, dpi: int = 300) -> None:
-    """
-    Saves the given figure object to a PDF file.
-
-    Args:
-        fig: The matplotlib figure object to save.
-        filename: The name of the output PDF file.
-        dpi: The resolution of the output PDF file.
-    """
-    with PdfPages(filename) as pdf:
-        fig.savefig(pdf, format='pdf', dpi=dpi)
-'''
-
-# Define the content for __init__.py
-init_code = '''\
-from .plotting import (
-    plot_normalized_umap,
-    save_figure_to_pdf
-)
-'''
-
-# Function to write content to a file
-def write_to_file(filepath, content):
-    with open(filepath, 'w') as file:
-        file.write(content)
-
-# Function to create directories if they do not exist
-def create_directories(directory):
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-# Main script to add functions to the project
-def add_functions_to_project():
-    project_root = os.path.dirname(os.path.abspath(__file__))
-    pl_directory = os.path.join(project_root, 'cellbin_moran', 'pl')
+for key, adata_sample in cellbin_data.items():
+    print(f"Processing {key} sample")
+    adata_pdf = cm.analysis.subset_anndata(adata_sample, {"Structure Name": "Prefrontal cortex"})
+    adata_pdf.obs["datatype"] = "cellbin"
+    merge_adata = cm.analysis.concatenate_and_intersect([adata_pdf, ref_pfc_sub])
+    merge_adata.layers["counts"] = merge_adata.X
+    merge_adata.obs["celltype"] = merge_adata.obs["fine"].str.split("-").str[0]
     
-    # Create directories if they do not exist
-    create_directories(pl_directory)
-    
-    # File paths
-    plotting_file = os.path.join(pl_directory, 'plotting.py')
-    init_file = os.path.join(pl_directory, '__init__.py')
-    
-    # Write content to files
-    write_to_file(plotting_file, plotting_code)
-    write_to_file(init_file, init_code)
+    sc.pp.normalize_total(merge_adata, target_sum=1e4)
+    sc.pp.log1p(merge_adata)
+    sc.pp.highly_variable_genes(merge_adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+    sc.pl.highly_variable_genes(merge_adata)
+    merge_adata.raw = merge_adata
+    merge_adata = merge_adata[:, merge_adata.var.highly_variable]
+    sns.kdeplot(data = merge_adata.obs, x = "nCount_SCT", hue = "datatype")
+    # Start regress
+    sc.pp.regress_out(merge_adata, ["nCount_SCT"])
+    sc.pp.scale(merge_adata, max_value=10)
+    sc.tl.pca(merge_adata, svd_solver="arpack")
+    sc.pl.pca(merge_adata, color="Thy1", title = key)
+    # Raw UMAP
+    sc.pp.neighbors(merge_adata, n_neighbors=10, n_pcs=40)
+    sc.tl.umap(merge_adata)
+    merge_adata.obsm["X_pca_umap"] = merge_adata.obsm["X_umap"]
+    # Harmony
+    sc.external.pp.harmony_integrate(merge_adata, key="datatype")
+    sc.pp.neighbors(merge_adata, n_neighbors=10, n_pcs=40, use_rep="X_pca_harmony")
+    sc.tl.umap(merge_adata)
+    merge_adata.obsm["X_harmony_umap"] = merge_adata.obsm["X_umap"]
+    sc.pl.umap(merge_adata, color = "celltype", ax = ax, palette=cm.palettes.general_type_colors)
+    mask = (merge_adata.obs["celltype"] == 'Micro') & (merge_adata.obs["datatype"] == 'cellbin')
+    sc.pl.umap(merge_adata[mask], color = "fine", palette=cm.palettes.cell_type_colors)
+    mask = merge_adata.obs["datatype"] == 'cellbin'
+    nei_df = cm.analysis.compute_neighbor_moran_i_by_category(merge_adata[mask], "min_center_dist")
+    # Store the result
+    nei_df.to_csv
+    merge_adata.write(f"/public/home/jijh/st_project/cellbin_analysis/annotated_cell_bins/umap_harmony/{key}_umap_harmony.h5ad")
 
-if __name__ == "__main__":
-    add_functions_to_project()
+
+
+
+
+
+
+
+
+
+
+
+regions = { 'ENT': 'Entorhinal area', 'HPF': 'Hippocampal formation', 'STR': 'Striatum', 'TH': 'Thalamus', 'RS': 'Retrosplenial area', 'PFC': 'Prefrontal cortex', 'BF': 'Basal forebrain' }
+for key, adata_sample in cellbin_data.items():
+    print(f"Processing {key} sample")
+    adata_pdf = cm.analysis.subset_anndata(adata_sample, {"Structure Name": regions[region]})
+    adata_pdf.obs["datatype"] = "cellbin"
+    merge_adata = cm.analysis.concatenate_and_intersect([adata_pdf, ref_pfc_sub])
+    merge_adata.layers["counts"] = merge_adata.X
+    merge_adata.obs["celltype"] = merge_adata.obs["fine"].str.split("-").str[0]
+    
+    sc.pp.normalize_total(merge_adata, target_sum=1e4)
+    sc.pp.log1p(merge_adata)
+    sc.pp.highly_variable_genes(merge_adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+    sc.pl.highly_variable_genes(merge_adata)
+    merge_adata.raw = merge_adata
+    merge_adata = merge_adata[:, merge_adata.var.highly_variable]
+    sns.kdeplot(data = merge_adata.obs, x = "nCount_SCT", hue = "datatype")
+    # Start regress
+    sc.pp.regress_out(merge_adata, ["nCount_SCT"])
+    sc.pp.scale(merge_adata, max_value=10)
+    sc.tl.pca(merge_adata, svd_solver="arpack")
+    sc.pl.pca(merge_adata, color="Thy1", title = key)
+    # Raw UMAP
+    sc.pp.neighbors(merge_adata, n_neighbors=10, n_pcs=40)
+    sc.tl.umap(merge_adata)
+    merge_adata.obsm["X_pca_umap"] = merge_adata.obsm["X_umap"]
+    # Harmony
+    sc.external.pp.harmony_integrate(merge_adata, key="datatype")
+    sc.pp.neighbors(merge_adata, n_neighbors=10, n_pcs=40, use_rep="X_pca_harmony")
+    sc.tl.umap(merge_adata)
+    merge_adata.obsm["X_harmony_umap"] = merge_adata.obsm["X_umap"]
+    sc.pl.umap(merge_adata, color = "celltype", ax = ax, palette=cm.palettes.general_type_colors)
+    mask = (merge_adata.obs["celltype"] == 'Micro') & (merge_adata.obs["datatype"] == 'cellbin')
+    sc.pl.umap(merge_adata[mask], color = "fine", palette=cm.palettes.cell_type_colors)
+    mask = merge_adata.obs["datatype"] == 'cellbin'
+    nei_df = cm.analysis.compute_neighbor_moran_i_by_category(merge_adata[mask], "min_center_dist")
+    # Store the result
+    nei_df.to_csv(f"/home1/jijh/st_project/cellbin_analysis/annotated_cell_bins/regress_harmony/{key}_{region}_regress_moranI.csv")
+    merge_adata.write(f"/home1/jijh/st_project/cellbin_analysis/annotated_cell_bins/regress_harmony/{key}_{region}_regress_harmony.h5ad")

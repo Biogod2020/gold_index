@@ -360,3 +360,174 @@ def plot_genes_in_spatial(
 
     return fig
 
+def plot_genes_in_spatial_by_genes(
+    adata_input,
+    sample_ids: list = None,
+    genes: list = [
+        "Rbfox3", "Map2", "Gap43", "Syn1", "Nefl",
+        "Vim", "Gfap", "Eno2", "Tubb3", "Camk2a"
+    ],
+    cut_off: float = 99.5,
+    fig_size_per_gene: tuple = (4, 4),
+    gene_col: str = "gene",
+    sample_col: str = "sample",
+    embedding_basis: str = "spatial",
+    size: int = 6,
+    save_path: str = None,
+    dpi: int = 100,
+    calc_pca: bool = False,
+    pca_params: dict = None,
+    n_pcs_to_plot: int = 2,
+    pattern: str = None,
+    **kwargs
+) -> plt.Figure:
+    """
+    Plots spatial embeddings for a list of neuronal soma genes across multiple samples.
+    Optionally includes PCA calculation for the provided genes using sklearn to avoid modifying anndata.
+    Args:
+        adata_input: Either an AnnData object or a dictionary of AnnData objects.
+        sample_ids: List of sample identifiers to plot. If None, will be derived from adata_input.
+        genes: List of genes to plot. Defaults to a predefined list of neuronal soma genes.
+        fig_size_per_gene: Size of the figure for each gene subplot.
+        gene_col: Column name for genes in the AnnData object.
+        sample_col: Column name for samples in the AnnData object.
+        embedding_basis: Basis for spatial embedding in the AnnData object.
+        size: Size of the points in the plot.
+        save_path: Optional path where the plot should be saved. If None, the plot will not be saved.
+        dpi: Dots per inch for saving the figure.
+        calc_pca: Boolean flag to calculate PCA.
+        pca_params: Dictionary of parameters for the calculate_pca function.
+        n_pcs_to_plot: Number of principal components to plot. Default is 2.
+        pattern: Pattern to extract from the sample ID to group samples in rows.
+        **kwargs: Additional keyword arguments to pass to `sc.pl.embedding`.
+    Returns:
+        plt.Figure: The matplotlib figure object used for plotting.
+    """
+
+    import re
+    import re
+    from collections import defaultdict
+    
+    # Define the function to group strings
+    def group_strings_by_substring(strings, pattern = pattern):
+        # Regular expression pattern to extract substring between HZ and M
+        pattern = re.compile(pattern)
+        
+        # Dictionary to store grouped strings
+        grouped_strings = defaultdict(list)
+        
+        # Iterate through each string in the input list
+        for string in strings:
+            # Find the substring between HZ and M
+            match = pattern.search(string)
+            if match:
+                # Extracted substring as the key
+                substring = match.group()
+                # Append the original string to the corresponding list in the dictionary
+                grouped_strings[substring].append(string)
+        
+        return dict(grouped_strings)
+
+    # Determine sample IDs if not provided
+    if sample_ids is None:
+        if isinstance(adata_input, dict):
+            sample_ids = list(adata_input.keys())
+        else:
+            sample_ids = adata_input.obs[sample_col].unique().tolist()
+    
+    # Group sample IDs by pattern
+    grouped_samples = {}
+    grouped_samples = group_strings_by_substring(sample_ids)
+    # Custom sort key function
+    def custom_sort_key(key):
+        # Treat "12" specially to ensure it's last
+        if key == '12':
+            return float('inf')
+        return int(key)
+    
+    # Sort the dictionary keys using the custom sort key
+    sorted_keys = sorted(grouped_samples, key=custom_sort_key)
+    
+    # Create a new dictionary with keys sorted
+    sorted_dict = {key: grouped_samples[key] for key in sorted_keys}
+    
+    # Output the sorted dictionary
+    sorted_dict
+
+    # Calculate top 0.5% value for each gene
+    if cut_off:
+        top_5_percent_values = {}
+        for gene in genes:
+            all_values = []
+            if isinstance(adata_input, dict):
+                for adata in adata_input.values():
+                    if gene in adata.var_names:
+                        all_values.extend(adata[:, gene].X.flatten())
+            else:
+                if gene in adata_input.var_names:
+                    all_values.extend(adata_input[:, gene].X.flatten())
+    
+            if all_values:
+                top_5_percent_values[gene] = np.percentile(all_values, cut_off)
+
+    # Ensure PCA is computed for the genes if requested
+    if calc_pca:
+        if pca_params is None:
+            pca_params = {}
+        pca_params.update({'n_components': n_pcs_to_plot})
+        if isinstance(adata_input, dict):
+            for adata in adata_input.values():
+                adata.obsm['X_pca'] = calculate_pca(adata, genes, **pca_params)
+                for i in range(n_pcs_to_plot):
+                    adata.obs[f"pc_{i}"] = adata.obsm['X_pca'][:, i] 
+        else:
+            adata_input.obsm['X_pca'] = calculate_pca(adata_input, genes, **pca_params)
+            adata_input.obs[f"pc_{i}"] = adata_input.obsm['X_pca'][:, i]
+            
+    if calc_pca:
+        genes = [f"pc_{i}" for i in range(n_pcs_to_plot)]
+    # Loop through each gene for plotting
+    for gene in genes:
+        # Create subplots based on the number of groups and the maximum number of samples in a group
+        n_groups = len(sorted_dict)
+        max_samples_in_group = max(len(samples) for samples in sorted_dict.values())
+        
+        fig, axs = plt.subplots(n_groups, max_samples_in_group, figsize=(fig_size_per_gene[0] * max_samples_in_group, fig_size_per_gene[1] * n_groups))
+
+        for i, (group_id, sample_id_list) in enumerate(sorted_dict.items()):
+            for j, sample_id in enumerate(sample_id_list):
+                ax = axs[i, j] if n_groups > 1 and max_samples_in_group > 1 else (axs[j] if n_groups == 1 else axs[i])
+                if cut_off:
+                    vmax = top_5_percent_values.get(gene, None)
+                else:
+                    vmax = 5
+                try:
+                    if isinstance(adata_input, dict):
+                        adata_sample = adata_input[sample_id]
+                    else:
+                        adata_sample = adata_input[adata_input.obs[sample_col] == sample_id]
+
+                    sc.pl.embedding(
+                        adata_sample,
+                        basis=embedding_basis,
+                        ax=ax,
+                        color=gene,
+                        size=size,
+                        show=False,
+                        vmin=0,
+                        vmax=vmax,
+                        **kwargs
+                    )
+                    ax.set_title(f"{sample_id}_{gene}")
+                    ax.set_aspect('equal', adjustable='box')
+                except Exception as e:
+                    print(f"Error plotting {gene} for sample {sample_id}: {str(e)}")
+
+        plt.tight_layout()
+
+        if save_path:
+            fig.savefig(f"{save_path}_{gene}.png", dpi=dpi)
+
+        plt.close()
+
+    return fig
