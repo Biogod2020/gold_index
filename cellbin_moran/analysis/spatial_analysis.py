@@ -114,7 +114,7 @@ def hierarchical_sample(
     import pandas as pd
     import numpy as np
     from sklearn.utils import check_random_state
-    
+
     if (n_samples is not None and fraction is not None) or (
         n_samples is None and fraction is None
     ):
@@ -129,8 +129,9 @@ def hierarchical_sample(
             if fraction is not None:
                 return group.sample(frac=fraction, random_state=rng)
             elif isinstance(n_samples, int):
-                n_to_sample = min(n_samples, len(group))
-                return group.sample(n=n_to_sample, random_state=rng)
+                return group.groupby(groupby_cols[level], group_keys=False, observed=False).apply(
+                    lambda x: x.sample(n=min(n_samples, len(x)), random_state=rng)
+                )f
             elif isinstance(n_samples, float):
                 return group.sample(frac=n_samples, random_state=rng)
         else:
