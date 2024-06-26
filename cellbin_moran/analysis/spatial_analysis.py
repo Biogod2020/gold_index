@@ -131,7 +131,7 @@ def hierarchical_sample(
             elif isinstance(n_samples, int):
                 return group.groupby(groupby_cols[level], group_keys=False, observed=False).apply(
                     lambda x: x.sample(n=min(n_samples, len(x)), random_state=rng)
-                )f
+                )
             elif isinstance(n_samples, float):
                 return group.sample(frac=n_samples, random_state=rng)
         else:
