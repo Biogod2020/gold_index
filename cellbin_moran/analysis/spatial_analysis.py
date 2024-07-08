@@ -10,9 +10,12 @@ from scipy.sparse import csr_matrix
 from libpysal.weights import WSP
 from esda.moran import Moran
 from typing import List, Dict
+from sklearn.preprocessing import MinMaxScaler, StandardScaler, RobustScaler
+from scipy.spatial.distance import pdist, squareform
 from anndata import AnnData
 import concurrent.futures
 import warnings
+
 
 def compute_moranI(
     adata: ad.AnnData, 
@@ -175,28 +178,67 @@ def subset_anndata(
     return adata[mask, :].copy()
 
 
-def neighbor_normalize_and_log_transform(adata: AnnData, value_key: str) -> pd.Series:
+def compute_distance_matrix(embedding: np.ndarray) -> np.ndarray:
     """
-    Scales the `value_key` column in `adata.obs` by its min and max values, normalizes it to 1e5, and log10 transforms it.
+    Computes the pairwise distance matrix for a given embedding.
 
     Args:
-        adata: The AnnData object containing the data.
-        value_key: The key in `adata.obs` containing the values to scale, normalize, and transform.
+        embedding: A 2D numpy array where rows represent points and columns represent dimensions.
+
+    Returns:
+        A 2D numpy array representing the pairwise distance matrix.
     """
-    values = adata.obs[value_key]
-    min_val = values.min()
-    max_val = values.max()
-    
-    # Scale the data
-    scaled_values = (values - min_val) / (max_val - min_val)
-    
-    # Normalize to 1e5 and log10 transform
-    normalized_transformed_values = np.log10((scaled_values * 1e5) + 1)
-    
-    return normalized_transformed_values
+    return squareform(pdist(embedding, 'euclidean'))
 
+def compute_weight_matrix_from_distances(distance_matrix: np.ndarray) -> np.ndarray:
+    """
+    Computes the weight matrix from a distance matrix using inverse distances.
 
-def neighbor_compute_moran_i(sub_adata: AnnData, value_key: str, category: str) -> dict:
+    Args:
+        distance_matrix: A 2D numpy array representing the pairwise distance matrix.
+
+    Returns:
+        A 2D numpy array representing the weight matrix.
+    """
+    with np.errstate(divide='ignore'):
+        weight_matrix = 1 / distance_matrix
+    np.fill_diagonal(weight_matrix, 0)  # weights for self-distance are set to zero
+    return weight_matrix
+
+def scale_values(values: np.ndarray, scaling_method: str, apply_log: bool, log_before_scaling: bool) -> np.ndarray:
+    """
+    Scales and optionally log-transforms the values.
+
+    Args:
+        values: The values to scale.
+        scaling_method: The method to use for scaling ('minmax', 'standard', 'robust', or None).
+        apply_log: Whether to apply log transformation.
+        log_before_scaling: Whether to apply log transformation before scaling.
+
+    Returns:
+        The scaled (and optionally log-transformed) values.
+    """
+    if apply_log and log_before_scaling:
+        values = np.log1p(values)
+
+    if scaling_method == 'minmax':
+        scaler = MinMaxScaler()
+    elif scaling_method == 'standard':
+        scaler = StandardScaler()
+    elif scaling_method == 'robust':
+        scaler = RobustScaler()
+    else:
+        scaler = None
+
+    if scaler is not None:
+        values = scaler.fit_transform(values.reshape(-1, 1)).flatten()
+
+    if apply_log and not log_before_scaling:
+        values = np.log1p(values)
+
+    return values
+
+def neighbor_compute_moran_i(sub_adata: AnnData, value_key: str, category: str, use_embedding: bool = False, embedding_key: str = None, scaling_method: str = None, apply_log: bool = False, log_before_scaling: bool = False) -> dict:
     """
     Computes Moran's I spatial autocorrelation for a subset of cells.
 
@@ -204,17 +246,30 @@ def neighbor_compute_moran_i(sub_adata: AnnData, value_key: str, category: str) 
         sub_adata: Subset of AnnData object for specific cell type.
         value_key: The key in `sub_adata.obs` containing the values to analyze.
         category: The categorical variable in `sub_adata.obs` to group by.
+        use_embedding: Whether to use embedding for distance calculation.
+        embedding_key: The key in `sub_adata.obsm` for the embedding.
+        scaling_method: The method to use for scaling ('minmax', 'standard', 'robust', or None).
+        apply_log: Whether to apply log transformation.
+        log_before_scaling: Whether to apply log transformation before scaling.
 
     Returns:
         A dictionary with Moran's I results.
     """
     try:
-        connectivities = sub_adata.obsp['connectivities']
-    except KeyError:
-        raise KeyError(f"Connectivity key 'connectivities' not found in sub_adata.obsp")
+        if use_embedding and embedding_key is not None:
+            embedding = sub_adata.obsm[embedding_key]
+            distance_matrix = compute_distance_matrix(embedding)
+            weight_matrix = compute_weight_matrix_from_distances(distance_matrix)
+            sparse_weight_matrix = csr_matrix(weight_matrix)
+            weights = WSP(sparse_weight_matrix)
+        else:
+            connectivities = sub_adata.obsp['connectivities']
+            weights = WSP(connectivities)
+    except KeyError as e:
+        raise KeyError(f"Key error: {e}")
 
-    weights = WSP(connectivities)
     values = sub_adata.obs[value_key].values
+    values = scale_values(values, scaling_method, apply_log, log_before_scaling)
     weights_full = weights.to_W()
     moran = Moran(values, weights_full)
     return {
@@ -224,7 +279,7 @@ def neighbor_compute_moran_i(sub_adata: AnnData, value_key: str, category: str) 
         "num_cell": len(values)
     }
 
-def neighbor_process_cell_type(adata: AnnData, cell_type: str, value_key: str, category: str) -> pd.DataFrame:
+def neighbor_process_cell_type(adata: AnnData, cell_type: str, value_key: str, category: str, use_embedding: bool = False, embedding_key: str = None, scaling_method: str = None, apply_log: bool = False, log_before_scaling: bool = False) -> pd.DataFrame:
     """
     Processes a specific cell type to compute Moran's I.
 
@@ -233,6 +288,11 @@ def neighbor_process_cell_type(adata: AnnData, cell_type: str, value_key: str, c
         cell_type: The specific cell type to process.
         value_key: The key in `adata.obs` containing the values to analyze.
         category: The categorical variable in `adata.obs` to group by.
+        use_embedding: Whether to use embedding for distance calculation.
+        embedding_key: The key in `adata.obsm` for the embedding.
+        scaling_method: The method to use for scaling ('minmax', 'standard', 'robust', or None).
+        apply_log: Whether to apply log transformation.
+        log_before_scaling: Whether to apply log transformation before scaling.
 
     Returns:
         A DataFrame with Moran's I results for the specific cell type.
@@ -241,7 +301,7 @@ def neighbor_process_cell_type(adata: AnnData, cell_type: str, value_key: str, c
     num_cell = sum(mask)
     if num_cell > 10:
         sub_adata = adata[mask].copy()
-        moranI_data = neighbor_compute_moran_i(sub_adata, value_key, category)
+        moranI_data = neighbor_compute_moran_i(sub_adata, value_key, category, use_embedding, embedding_key, scaling_method, apply_log, log_before_scaling)
         return pd.DataFrame([moranI_data])
     return pd.DataFrame()
 
@@ -249,7 +309,12 @@ def compute_neighbor_moran_i_by_category(
     adata: AnnData, 
     value_key: str, 
     category: str = "celltype", 
-    connectivity_key: str = 'connectivities'
+    connectivity_key: str = 'connectivities',
+    use_embedding: bool = False,
+    embedding_key: str = None,
+    scaling_method: str = None,
+    apply_log: bool = False,
+    log_before_scaling: bool = False
 ) -> pd.DataFrame:
     """
     Computes Moran's I spatial autocorrelation for each cell type.
@@ -259,6 +324,11 @@ def compute_neighbor_moran_i_by_category(
         value_key: The key in `adata.obs` containing the values to analyze.
         category: The categorical variable in `adata.obs` to group by.
         connectivity_key: The key in `adata.obsp` containing the connectivities matrix.
+        use_embedding: Whether to use embedding for distance calculation.
+        embedding_key: The key in `adata.obsm` for the embedding.
+        scaling_method: The method to use for scaling ('minmax', 'standard', 'robust', or None).
+        apply_log: Whether to apply log transformation.
+        log_before_scaling: Whether to apply log transformation before scaling.
 
     Returns:
         A DataFrame with Moran's I results for each cell type.
@@ -266,42 +336,76 @@ def compute_neighbor_moran_i_by_category(
     top_level_types = adata.obs[category].unique()
     result_df = pd.DataFrame()
     data_present = False
-    
+
     for cell_type in top_level_types:
-        cell_type_df = neighbor_process_cell_type(adata, cell_type, value_key, category)
+        cell_type_df = neighbor_process_cell_type(adata, cell_type, value_key, category, use_embedding, embedding_key, scaling_method, apply_log, log_before_scaling)
         if not cell_type_df.empty:
             result_df = pd.concat([result_df, cell_type_df])
             data_present = True
-    
+
     if not data_present:
         return pd.DataFrame()
-    
+
     result_df = result_df.set_index(category)
     result_df = result_df.sort_values("Moran's I", ascending=False)
     return result_df
 
-def process_anndata_compute_neighbor_moran_i(
-    adata_path: str, 
-    value_key: str, 
-    category: str, 
-    connectivity_key: str,
-    normalize_log: bool
-) -> pd.DataFrame:
+
+
+
+
+def identify_nearby_cells(
+    merge_adata: ad.AnnData,
+    label_column: str = 'celltype',
+    target_col: str = 'datatype',
+    targed_label: str = 'sn',
+    threshold: float = 0.1,
+    new_label_col: str = 'nearby_label'
+) -> ad.AnnData:
     """
-    Processes an AnnData object from a file path to compute Moran's I.
+    Identifies and labels nearby cells in an AnnData object based on a threshold in the neighbor graph.
 
     Args:
-        adata_path: The file path to the AnnData object.
-        value_key: The key in `adata.obs` containing the values to analyze.
-        category: The categorical variable in `adata.obs` to group by.
-        connectivity_key: The key in `adata.obsp` containing the connectivities matrix.
+        merge_adata: The AnnData object containing cells with connectivity information.
+        label_column: The column name in `merge_adata.obs` which contains the labels for the target cells.
+        target_col: The column name in `merge_adata.obs` representing labeled and unlabeled cells.
+        targed_label: The label in `target_col` to consider as the source of nearby cells.
+        threshold: The threshold for considering a cell "near" based on the neighbor graph connectivity.
+        new_label_col: The column name to store new labels for nearby cells.
 
     Returns:
-        A DataFrame with Moran's I results for each cell type.
+        A new AnnData object containing only the nearby cells that were identified.
     """
-    adata = sc.read_h5ad(adata_path)
-    if normalize_log == True:
-        adata.obs[value_key] = neighbor_normalize_and_log_transform(adata, value_key)
-        print(adata.obs[value_key].describe())
-        
-    return compute_neighbor_moran_i_by_category(adata, value_key, category, connectivity_key)
+    import anndata as ad
+    import numpy as np
+
+    celltypes = merge_adata.obs[label_column].unique()
+    merge_adata.obs[new_label_col] = 'unlabeled'  # Default value for cells that are not nearby
+    nearby_cellbin_indices_dict = {}
+
+    for celltype in celltypes:
+        print(f"Processing celltype: {celltype}")
+        sn_mask = (merge_adata.obs[target_col] == targed_label) & (merge_adata.obs[label_column] == celltype)
+        cellbin_mask = (merge_adata.obs[target_col] != targed_label) & (merge_adata.obs[label_column] == celltype)
+        neighbor_graph = merge_adata.obsp['connectivities']
+        sn_indices = np.where(sn_mask)[0]
+        cellbin_indices = np.where(cellbin_mask)[0]
+
+        if len(sn_indices) == 0 or len(cellbin_indices) == 0:
+            print(f"No labeled or unlabeled cells found for celltype: {celltype}")
+            continue
+
+        neighbor_sums = neighbor_graph[sn_indices].sum(axis=0)
+        neighbor_sums = np.asarray(neighbor_sums).flatten()
+        nearby_cellbin_indices = cellbin_indices[neighbor_sums[cellbin_indices] > threshold]
+
+        if len(nearby_cellbin_indices) > 0:
+            nearby_cellbin_indices_dict[celltype] = nearby_cellbin_indices
+            merge_adata.obs.loc[merge_adata.obs.index[nearby_cellbin_indices], new_label_col] = f'near_{celltype}'
+        else:
+            print(f"No nearby unlabeled cells found for celltype: {celltype}")
+
+    all_nearby_cellbin_indices = np.concatenate(list(nearby_cellbin_indices_dict.values()))
+    print(f"Total nearby unlabeled cells found: {merge_adata[all_nearby_cellbin_indices].shape[0]}")
+
+    return merge_adata[all_nearby_cellbin_indices].copy()
