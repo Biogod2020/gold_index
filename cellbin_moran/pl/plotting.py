@@ -361,6 +361,7 @@ def plot_genes_in_spatial(
     return fig
 
 def plot_genes_in_spatial_by_genes(
+    
     adata_input,
     sample_ids: list = None,
     genes: list = [
@@ -531,3 +532,328 @@ def plot_genes_in_spatial_by_genes(
         plt.close()
 
     return fig
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+from matplotlib.patches import Rectangle, Circle
+import matplotlib.cm as cmp
+from matplotlib.colors import Normalize, ListedColormap
+from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
+from scipy.spatial import cKDTree
+
+def plot_cells(ax, obs, cell_data_dict, color_palette, plaque_set, value_column, is_continuous):
+    """
+    Plot individual cells with continuous or discrete colors.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to plot the cells on.
+        obs (pandas.DataFrame): DataFrame containing cell observations with 'x', 'y', 'fine', and value_column.
+        cell_data_dict (dict): Dictionary with cell data arrays.
+        color_palette (dict): Dictionary mapping discrete values to colors.
+        plaque_set (set): Set of coordinates representing plaques.
+        value_column (str): Column name in `obs` containing the values for coloring.
+        is_continuous (bool): Whether the values are continuous.
+
+    Returns:
+        dict or None: Dictionary of legend patches if discrete values, otherwise None.
+    """
+    legend_patches = {}  # Store unique patches for the legend
+
+    if is_continuous:
+        norm = Normalize(vmin=obs[value_column].min(), vmax=obs[value_column].max())
+        cmap = cmp.PuRd
+    else:
+        unique_values = obs[value_column].unique()
+        discrete_cmap = ListedColormap([color_palette[val] for val in unique_values if val in color_palette])
+
+    for index, row in obs.iterrows():
+        x, y, cluster = row['x'], row['y'], row['fine']
+        value = row[value_column]
+
+        if (x, y) in plaque_set:
+            cluster = "Plaque"
+        slice_id = list(cell_data_dict.keys())[0].split(sep=":")[0]
+        sample_id = f"{slice_id}:{x}_{y}"
+
+        if sample_id in cell_data_dict:
+            ndarray = process_ndarray(cell_data_dict[sample_id])
+            if not ndarray.size:
+                continue
+
+            mass_center = np.array([x, y])
+            vertices = ndarray + mass_center
+
+            if cluster == "Plaque":
+                polygon_color = "red"
+            elif is_continuous:
+                polygon_color = cmap(norm(value))
+            else:
+                polygon_color = color_palette.get(value, "white")
+
+            polygon = patches.Polygon(vertices, closed=True, color=polygon_color)
+            ax.add_patch(polygon)
+
+            cluster_label = cluster if is_continuous else value
+
+            if not is_continuous and cluster_label not in legend_patches:
+                legend_patches[cluster_label] = patches.Patch(color=polygon_color, label=cluster_label)
+
+    return legend_patches if not is_continuous else None
+
+def highlight_selected_plaque(ax, plaque_coord, tissue_id):
+    """
+    Highlight the selected plaque in the plot.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to highlight the plaque on.
+        plaque_coord (pandas.DataFrame): DataFrame containing plaque coordinates.
+        tissue_id (str): The tissue identifier to highlight.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the highlighted plaque.
+    """
+    selected_plaque = plaque_coord[plaque_coord['tissue'] == tissue_id]
+    centroid = selected_plaque[['row', 'col']].mean()
+
+    x_lim = (centroid['col'] - 500, centroid['col'] + 500)
+    y_lim = (centroid['row'] - 500, centroid['row'] + 500)
+
+    ax.set_xlim(*x_lim)
+    ax.set_ylim(*y_lim)
+    return ax
+
+def draw_viewing_region(ax, color='black', linewidth=1):
+    """
+    Draw the outline box representing the viewing region.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to draw the outline on.
+        color (str): The color of the outline.
+        linewidth (int): The width of the outline.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the viewing region outline.
+    """
+    x_limits = ax.get_xlim()
+    y_limits = ax.get_ylim()
+
+    width = x_limits[1] - x_limits[0]
+    height = y_limits[1] - y_limits[0]
+    outline_box = Rectangle((x_limits[0], y_limits[0]), width, height,
+                            edgecolor=color, facecolor='none', lw=linewidth)
+
+    ax.add_patch(outline_box)
+
+    return ax
+
+def process_ndarray(ndarray):
+    """
+    Process ndarray to filter out invalid values.
+
+    Args:
+        ndarray (numpy.ndarray): The ndarray to process.
+
+    Returns:
+        numpy.ndarray: The filtered ndarray.
+    """
+    mask = ~np.any(ndarray == 32767, axis=1)
+    return ndarray[mask]
+
+def plot_legend(ax, legend_patches):
+    """
+    Add a legend to the axis for discrete values.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to add the legend to.
+        legend_patches (dict): Dictionary of legend patches.
+
+    Returns:
+        None
+    """
+    if legend_patches:
+        ax.legend(handles=legend_patches.values(), loc='center left', bbox_to_anchor=(1, 0.5), markerscale=4)
+
+def plot_colorbar(ax, cmap, norm):
+    """
+    Add colorbar for continuous values.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to add the colorbar to.
+        cmap (matplotlib.colors.Colormap): The colormap for the colorbar.
+        norm (matplotlib.colors.Normalize): The normalization for the colorbar.
+
+    Returns:
+        None
+    """
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    plt.colorbar(sm, ax=ax, orientation='vertical', fraction=0.02, pad=0.04)
+
+def set_axes_view(ax, x_start, y_start, win_size):
+    """
+    Set the view window based on the win_size.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to set the view on.
+        x_start (float): The starting x-coordinate.
+        y_start (float): The starting y-coordinate.
+        win_size (float): The size of the view window.
+
+    Returns:
+        None
+    """
+    if win_size:
+        ax.set_xlim([x_start, x_start + win_size])
+        ax.set_ylim([y_start, y_start + win_size])
+
+def set_axes_style(ax):
+    """
+    Set axes styles.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to set the styles on.
+
+    Returns:
+        None
+    """
+    ax.set_aspect('equal', adjustable='box')
+    ax.axis('off')
+    plt.subplots_adjust(right=0.75)
+
+def plot_combined_v5(ax, cell_data_dict, obs, color_palette, plaque_coord, value_column, is_continuous):
+    """
+    Main function for plotting with continuous or discrete coloring.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to plot on.
+        cell_data_dict (dict): Dictionary with cell data arrays.
+        obs (pandas.DataFrame): DataFrame containing cell observations.
+        color_palette (dict): Dictionary mapping discrete values to colors.
+        plaque_coord (pandas.DataFrame): DataFrame containing plaque coordinates.
+        value_column (str): Column name in `obs` containing the values for coloring.
+        is_continuous (bool): Whether the values are continuous.
+
+    Returns:
+        matplotlib.axes.Axes: The axis with the plotted data.
+    """
+    plaque_set = set(zip(plaque_coord['row'], plaque_coord['col']))
+    legend_patches = plot_cells(ax, obs, cell_data_dict, color_palette, plaque_set, value_column, is_continuous)
+    if not is_continuous:
+        plot_legend(ax, legend_patches)
+    else:
+        norm = Normalize(vmin=obs[value_column].min(), vmax=obs[value_column].max())
+        plot_colorbar(ax, cmp.PuRd, norm)
+    set_axes_style(ax)
+    return ax
+
+def add_scalebar(ax, length_μm, units_per_μm, label='1000 μm', **kwargs):
+    """
+    Add a scale bar to an axis.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to add the scale bar to.
+        length_μm (float): The length of the scale bar in micrometers.
+        units_per_μm (float): The number of units per micrometer.
+        label (str): The label for the scale bar.
+        kwargs: Additional arguments for the Rectangle patch.
+
+    Returns:
+        None
+    """
+    length_units = length_μm * units_per_μm
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    
+    xpos = xlim[0] + (xlim[1] - xlim[0]) * 0.8
+    ypos = ylim[0] + (ylim[1] - ylim[0]) * 0.9
+    
+    scalebar = patches.Rectangle((xpos, ypos), length_units, (ylim[1] - ylim[0]) * 0.01,
+                                 linewidth=1, edgecolor='black', facecolor='black', **kwargs)
+    ax.add_patch(scalebar)
+    
+    ax.text(xpos + length_units / 2, ypos + (ylim[1] - ylim[0]) * 0.02, label,
+            color='black', ha='center', va='bottom', fontsize=10)
+
+def filter_grid(grid_z, obs, grid_points_coords):
+    """
+    Filter grid to remove invalid values.
+
+    Args:
+        grid_z (numpy.ndarray): Grid values.
+        obs (pandas.DataFrame): DataFrame containing cell observations.
+        grid_points_coords (numpy.ndarray): Coordinates of grid points.
+
+    Returns:
+        numpy.ndarray: Filtered grid.
+    """
+    original_points = np.c_[obs['x'].values, obs['y'].values]
+    tree = cKDTree(grid_points_coords)
+    distances, indices = tree.query(original_points)
+    inx_unique = np.array(list(set(indices)))
+    grid_z_flat = grid_z.flatten()
+    mask = np.zeros(shape=len(grid_z_flat), dtype=bool)
+    mask[inx_unique] = True
+    grid_z_flat[~mask] = 0
+    return grid_z_flat.reshape(grid_z.shape)
+
+def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax=None, sigma=1.0, padding=0.05, scatter=False):
+    """
+    Add contours to the plot.
+
+    Args:
+        ax (matplotlib.axes.Axes): The axis to add the contours to.
+        obs (pandas.DataFrame): DataFrame containing cell observations.
+        value_column (str): Column name in `obs` containing the values for contouring.
+        contour_cmap (str): Colormap for the contours.
+        levels (int): Number of contour levels.
+        vmin (float): Minimum value for the contours.
+        vmax (float): Maximum value for the contours.
+        sigma (float): Standard deviation for Gaussian filter.
+        padding (float): Padding around the data for contouring.
+        scatter (bool): Whether to scatter plot the points.
+
+    Returns:
+        None
+    """
+    x_pad = padding * (obs['x'].max() - obs['x'].min())
+    y_pad = padding * (obs['y'].max() - obs['y'].min())
+
+    grid_x, grid_y = np.mgrid[(obs['x'].min() - x_pad):(obs['x'].max() + x_pad):150j, 
+                              (obs['y'].min() - y_pad):(obs['y'].max() + y_pad):150j]
+    grid_points = np.c_[grid_x.ravel(), grid_y.ravel()]
+
+    scaled_values = 5 * (obs[value_column] - obs[value_column].min()) / (obs[value_column].max() - obs[value_column].min())
+
+    grid_z = griddata((obs['x'], obs['y']), scaled_values, (grid_x, grid_y), method='nearest')
+
+    grid_z_fil = filter_grid(grid_z, obs, grid_points)
+
+    grid_z = gaussian_filter(grid_z_fil, sigma=sigma)
+
+    if vmin is None:
+        vmin = grid_z.min()
+    if vmax is None:
+        vmax = grid_z.max()
+
+    contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=0.5, colors='k', vmin=vmin, vmax=vmax)
+    ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=cm.get_cmap(contour_cmap), alpha=0.5, vmin=vmin, vmax=vmax)
+
+    ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
