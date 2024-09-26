@@ -1,0 +1,66 @@
+import numpy as np
+import pandas as pd
+from scipy.spatial import cKDTree
+from scipy.ndimage import gaussian_filter
+from scipy.interpolate import griddata
+import matplotlib.pyplot as plt
+
+def z_score_standardization(data):
+    mean = np.nanmean(data)
+    std = np.nanstd(data)
+    return (data - mean) / std
+
+def calculate_padding(obs, padding):
+    x_pad = padding * (obs['x'].max() - obs['x'].min())
+    y_pad = padding * (obs['y'].max() - obs['y'].min())
+    return x_pad, y_pad
+
+def apply_mask(grid_z, mask):
+    grid_z[~mask] = 0
+    return grid_z
+
+def filter_grid(grid_z, obs, grid_points_coords):
+    original_points = np.c_[obs['x'].values, obs['y'].values]
+    tree = cKDTree(grid_points_coords)
+    distances, indices = tree.query(original_points)
+    unique_indices = np.array(list(set(indices)))
+    mask = np.zeros(shape=len(grid_z.flatten()), dtype=bool)
+    mask[unique_indices] = True
+    return apply_mask(grid_z.flatten(), mask).reshape(grid_z.shape)
+
+def generate_grid(obs, padding):
+    x_pad, y_pad = calculate_padding(obs, padding)
+    grid_x, grid_y = np.mgrid[
+        (obs['x'].min() - x_pad):(obs['x'].max() + x_pad):150j, 
+        (obs['y'].min() - y_pad):(obs['y'].max() + y_pad):150j
+    ]
+    grid_points = np.c_[grid_x.ravel(), grid_y.ravel()]
+    return grid_x, grid_y, grid_points
+
+def interpolate_grid(obs, grid_x, grid_y, value_column):
+    scaled_values = obs[value_column]
+    return griddata((obs['x'], obs['y']), scaled_values, (grid_x, grid_y), method='nearest')
+
+def plot_contours(ax, grid_x, grid_y, grid_z, levels, contour_cmap, alpha, vmin, vmax, line_color, line_width, value_label):
+    if vmin is None and vmax is None:
+        contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color)
+        ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha)
+    else:
+        contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color, vmin=vmin, vmax=vmax)
+        ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha, vmin=vmin, vmax=vmax)
+
+    if value_label:
+        ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
+
+def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax=None, sigma=1.0, padding=0.05, scatter=False, alpha=0.5, line_color="white", line_width=1, value_label=False):
+    grid_x, grid_y, grid_points = generate_grid(obs, padding)
+    grid_z = interpolate_grid(obs, grid_x, grid_y, value_column)
+    grid_z_filtered = filter_grid(grid_z, obs, grid_points)
+    
+    zero_positions = np.where(grid_z_filtered == 0)
+    grid_z_smoothed = gaussian_filter(grid_z_filtered, sigma=sigma)
+    grid_z_smoothed[zero_positions] = None
+    
+    grid_z_standardized = z_score_standardization(grid_z_smoothed)
+    
+    plot_contours(ax, grid_x, grid_y, grid_z_standardized, levels, contour_cmap, alpha, vmin, vmax, line_color, line_width, value_label)

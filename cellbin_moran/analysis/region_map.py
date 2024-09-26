@@ -493,7 +493,11 @@ hippo_map = {'Retrosplenial area': 'RS',
 
 
 
+<<<<<<< HEAD
 merged_map = {'Primary motor area': 'PFC',
+=======
+ merged_map = {'Primary motor area': 'PFC',
+>>>>>>> eb1ea036751dc078691517402bf3e36a138fa399
  'Primary motor area Layer 1': 'PFC',
  'Primary motor area Layer 2/3': 'PFC',
  'Primary motor area Layer 5': 'PFC',
@@ -982,4 +986,8 @@ merged_map = {'Primary motor area': 'PFC',
  'Zona incerta': 'BF',
  'Dopaminergic A13 group': 'BF',
  'Fields of Forel': 'BF',
+<<<<<<< HEAD
  'Median eminence': 'BF'}
+=======
+ 'Median eminence': 'BF'}
+>>>>>>> eb1ea036751dc078691517402bf3e36a138fa399
