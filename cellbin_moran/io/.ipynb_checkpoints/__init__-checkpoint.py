@@ -1,2 +1,1 @@
-from .data_loading import load_sct_and_set_index
-from .file_operations import list_files_matching_criteria, load_data_in_parallel, read_and_process_metadata, merge_metadata
+from .file_operations import list_files_matching_criteria, load_data_in_parallel, read_and_process_metadata, merge_metadata, load_sct_and_set_index, read_csv_files_concurrently

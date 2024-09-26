@@ -1,27 +1,49 @@
 # cellbin_moran/io/file_operations.py
 
 import os
+import re
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from typing import Dict
+import scanpy as sc
+import os
+import re
 
-def list_files_matching_criteria(directory: str, criteria: str, separator: str = "_") -> dict:
+def list_files_matching_criteria(directory: str, condition: str = None, regex: str = None, separator: str = "_", id_index: int = 0) -> dict:
     """
-    Lists files in a directory matching a given criteria.
+    Lists files in a directory matching a given condition or regular expression and extracts an ID from the filename.
 
     Args:
         directory: The directory to search for files.
-        criteria: The criteria to filter files by.
+        condition: The conditional equation to filter files by. The condition should be a valid Python expression
+                   where 'file' can be used as the variable.
+        regex: The regular expression to filter files by.
         separator: The separator used to split the filenames.
+        id_index: The index of the split result to be used as the dictionary key.
 
     Returns:
-        A dictionary where the keys are the prefixes of the filenames split by the separator
-        and the values are the full file paths of the files that match the criteria.
+        A dictionary where the keys are the specified parts of the filenames (split by the separator)
+        and the values are the full file paths of the files that match the condition or regex.
     """
     files = sorted(os.listdir(directory))
-    paths = {file.split(separator)[0]: os.path.join(directory, file) for file in files}
-    filtered_paths = {file: path for file, path in paths.items() if criteria in file}
-    return filtered_paths
+
+    # Filter files based on condition or regex
+    if condition:
+        filtered_files = [file for file in files if eval(condition)]
+    elif regex:
+        pattern = re.compile(regex)
+        filtered_files = [file for file in files if pattern.search(file)]
+    else:
+        filtered_files = files
+
+
+    # Create the dictionary with the specified part of the filenames as keys
+    paths = {file.split(separator)[id_index]: os.path.join(directory, file) for file in filtered_files}
+    
+    return paths
+
+
+
 
 def load_data_in_parallel(file_paths: dict, load_function: callable) -> dict:
     """
@@ -89,3 +111,43 @@ def merge_metadata(cellbin_data: Dict[str, ad.AnnData], meta_data: Dict[str, pd.
                 print(f"Error merging data for key '{key}': {e}")
         else:
             print(f"Metadata for key '{key}' not found in the provided meta_data dictionary.")
+
+
+
+
+def load_sct_and_set_index(adata_path: str) -> sc.AnnData:
+    """
+    Loads an AnnData object from a file and sets the index for the `raw.var` and `var` dataframes.
+
+    Args:
+        adata_path: Path to the .h5ad file containing the AnnData object.
+
+    Returns:
+        The AnnData object with updated indices for `raw.var` and `var`.
+    """
+    adata = sc.read_h5ad(adata_path)
+    adata.raw.var.set_index("_index", inplace=True)
+    adata.var.set_index("_index", inplace=True)
+    return adata
+
+def read_csv_files_concurrently(file_dict):
+    """
+    Reads multiple CSV files concurrently and returns a dictionary of DataFrames.
+
+    :param file_dict: Dictionary where the key is a variable name and the value is the path to the CSV file.
+    :return: Dictionary where the key is the variable name and the value is the corresponding DataFrame.
+    """
+    def load_csv(key, path):
+        print(f"Reading {key}")
+        return key, pd.read_csv(path, skiprows=[1])
+
+    result_dict = {}
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_key = {executor.submit(load_csv, key, path): key for key, path in file_dict.items()}
+        
+        for future in concurrent.futures.as_completed(future_to_key):
+            key, df = future.result()
+            result_dict[key] = df
+            
+    return result_dict

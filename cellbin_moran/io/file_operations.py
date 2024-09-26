@@ -5,7 +5,7 @@ import re
 import pandas as pd
 from concurrent.futures import ProcessPoolExecutor
 from typing import Dict
-
+import scanpy as sc
 import os
 import re
 
@@ -111,3 +111,43 @@ def merge_metadata(cellbin_data: Dict[str, ad.AnnData], meta_data: Dict[str, pd.
                 print(f"Error merging data for key '{key}': {e}")
         else:
             print(f"Metadata for key '{key}' not found in the provided meta_data dictionary.")
+
+
+
+
+def load_sct_and_set_index(adata_path: str) -> sc.AnnData:
+    """
+    Loads an AnnData object from a file and sets the index for the `raw.var` and `var` dataframes.
+
+    Args:
+        adata_path: Path to the .h5ad file containing the AnnData object.
+
+    Returns:
+        The AnnData object with updated indices for `raw.var` and `var`.
+    """
+    adata = sc.read_h5ad(adata_path)
+    adata.raw.var.set_index("_index", inplace=True)
+    adata.var.set_index("_index", inplace=True)
+    return adata
+
+def read_csv_files_concurrently(file_dict):
+    """
+    Reads multiple CSV files concurrently and returns a dictionary of DataFrames.
+
+    :param file_dict: Dictionary where the key is a variable name and the value is the path to the CSV file.
+    :return: Dictionary where the key is the variable name and the value is the corresponding DataFrame.
+    """
+    def load_csv(key, path):
+        print(f"Reading {key}")
+        return key, pd.read_csv(path, skiprows=[1])
+
+    result_dict = {}
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_key = {executor.submit(load_csv, key, path): key for key, path in file_dict.items()}
+        
+        for future in concurrent.futures.as_completed(future_to_key):
+            key, df = future.result()
+            result_dict[key] = df
+            
+    return result_dict
