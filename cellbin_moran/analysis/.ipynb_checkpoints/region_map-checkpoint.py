@@ -493,7 +493,9 @@ hippo_map = {'Retrosplenial area': 'RS',
 
 
 
+
 merged_map = {'Primary motor area': 'PFC',
+
  'Primary motor area Layer 1': 'PFC',
  'Primary motor area Layer 2/3': 'PFC',
  'Primary motor area Layer 5': 'PFC',

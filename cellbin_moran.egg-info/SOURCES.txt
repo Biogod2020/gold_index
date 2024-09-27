@@ -10,12 +10,12 @@ cellbin_moran/analysis/__init__.py
 cellbin_moran/analysis/region_map.py
 cellbin_moran/analysis/spatial_analysis.py
 cellbin_moran/io/__init__.py
-cellbin_moran/io/data_loading.py
 cellbin_moran/io/file_operations.py
 cellbin_moran/pl/__init__.py
 cellbin_moran/pl/palettes.py
 cellbin_moran/pl/plotting.py
 tests/__init__.py
+tests/boxplot.py
 tests/plot_code_que.py
 tests/plot_code_ref.py
 tests/test_data_loading.py

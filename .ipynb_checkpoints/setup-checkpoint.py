@@ -8,7 +8,6 @@ setup(
         'numpy',
         'pandas',
         'scanpy',
-        'squidpy',
         # other dependencies
     ],
 )
