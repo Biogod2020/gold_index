@@ -10,6 +10,7 @@ cellbin_moran/analysis/__init__.py
 cellbin_moran/analysis/region_map.py
 cellbin_moran/analysis/spatial_analysis.py
 cellbin_moran/io/__init__.py
+cellbin_moran/io/data_loading.py
 cellbin_moran/io/file_operations.py
 cellbin_moran/pl/__init__.py
 cellbin_moran/pl/palettes.py
