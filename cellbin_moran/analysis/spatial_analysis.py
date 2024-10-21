@@ -422,6 +422,90 @@ def compute_neighbor_moran_i_by_category(
     return result_df
 
 
+import concurrent.futures
+import logging
+import pandas as pd
+import numpy as np
+
+# Set up logging configuration
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def extract_gene_expression(
+    adatas: dict, 
+    gene_list: list
+) -> tuple[dict, dict]:
+    """
+    Extracts the gene expression data for the specified genes from a collection of AnnData objects.
+
+    Parameters:
+    -----------
+    adatas : dict
+        A dictionary where keys are identifiers and values are AnnData objects containing single-cell RNA-seq data.
+    gene_list : list
+        A list of gene names to extract from each AnnData object.
+
+    Returns:
+    --------
+    tuple[dict, dict]:
+        - A dictionary with the same keys as the input adatas, where the values are DataFrames containing the gene expression data.
+        - A dictionary of any errors encountered during processing, with keys corresponding to the adatas keys and values as exceptions.
+    """
+    gene_expression_dict = {}
+    processing_errors = {}
+
+    def process_adata(key: str) -> tuple[str, pd.DataFrame]:
+        """
+        Processes a single AnnData object to extract the gene expression data.
+
+        Parameters:
+        -----------
+        key : str
+            The key identifying the AnnData object within the adatas dictionary.
+
+        Returns:
+        --------
+        tuple[str, pd.DataFrame]:
+            - The key corresponding to the AnnData object.
+            - A DataFrame containing the gene expression data for the specified genes, with missing genes filled with None.
+        """
+        try:
+            logging.info(f"Processing AnnData for key: {key}")
+            
+            # Create a mask for genes that exist in the AnnData object's var_names
+            gene_exists_mask = [gene in adatas[key].var_names for gene in gene_list]
+            existing_genes = [gene for gene, exists in zip(gene_list, gene_exists_mask) if exists]
+            
+            # Initialize a DataFrame with None for all columns
+            expression_df = pd.DataFrame(None, index=adatas[key].obs_names, columns=gene_list)
+            
+            if existing_genes:
+                # Extract expression data for the existing genes
+                expression_data = adatas[key][:, existing_genes].X.toarray()
+                expression_df.loc[:, existing_genes] = expression_data  # Assign the data to the corresponding columns
+            
+            logging.info(f"Successfully processed AnnData for key: {key}")
+            return (key, expression_df)
+        
+        except Exception as exc:
+            logging.error(f"Error processing AnnData for key: {key} - {exc}")
+            return (key, exc)
+
+    # Use ThreadPoolExecutor to process each AnnData object in parallel
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(process_adata, key): key for key in adatas.keys()}
+        for future in concurrent.futures.as_completed(futures):
+            key = futures[future]
+            try:
+                result_key, result_df = future.result()
+                if isinstance(result_df, Exception):
+                    processing_errors[result_key] = result_df
+                else:
+                    gene_expression_dict[result_key] = result_df
+            except Exception as exc:
+                processing_errors[key] = exc
+
+    return gene_expression_dict, processing_errors
+
 
 
 
