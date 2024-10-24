@@ -840,7 +840,7 @@ def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax
         vmax = grid_z.max()
 
     contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=0.5, colors='k', vmin=vmin, vmax=vmax)
-    ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=cm.get_cmap(contour_cmap), alpha=0.5, vmin=vmin, vmax=vmax)
+    ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=plt.get_cmap(contour_cmap), alpha=0.5, vmin=vmin, vmax=vmax)
 
     ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
 
