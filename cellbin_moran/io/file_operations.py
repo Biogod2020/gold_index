@@ -3,7 +3,7 @@
 import os
 import re
 import pandas as pd
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from typing import Dict
 import scanpy as sc
 import os
@@ -143,10 +143,10 @@ def read_csv_files_concurrently(file_dict):
 
     result_dict = {}
     
-    with concurrent.futures.ThreadPoolExecutor() as executor:
+    with ThreadPoolExecutor() as executor:
         future_to_key = {executor.submit(load_csv, key, path): key for key, path in file_dict.items()}
         
-        for future in concurrent.futures.as_completed(future_to_key):
+        for future in as_completed(future_to_key):
             key, df = future.result()
             result_dict[key] = df
             
