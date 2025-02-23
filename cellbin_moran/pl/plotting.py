@@ -800,7 +800,9 @@ def filter_grid(grid_z, obs, grid_points_coords):
     grid_z_flat[~mask] = 0
     return grid_z_flat.reshape(grid_z.shape)
 
-def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax=None, sigma=1.0, padding=0.05, scatter=False):
+def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, 
+                 vmax=None, sigma=1.0, padding=0.05, scatter=False, alpha = 0.5, 
+                 line_color = "white", line_width = 1, value_lable = False):
     """
     Add contours to the plot.
 
@@ -826,23 +828,36 @@ def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax
                               (obs['y'].min() - y_pad):(obs['y'].max() + y_pad):150j]
     grid_points = np.c_[grid_x.ravel(), grid_y.ravel()]
 
-    scaled_values = 5 * (obs[value_column] - obs[value_column].min()) / (obs[value_column].max() - obs[value_column].min())
+    scaled_values = obs[value_column]
 
     grid_z = griddata((obs['x'], obs['y']), scaled_values, (grid_x, grid_y), method='nearest')
 
     grid_z_fil = filter_grid(grid_z, obs, grid_points)
 
+    # Record positions of 0 values in grid_z_fil
+    zero_positions = np.where(grid_z_fil == 0)
+    
     grid_z = gaussian_filter(grid_z_fil, sigma=sigma)
+    
+    # Reset the 0 positions back to 0
+    grid_z[zero_positions] = None
 
-    if vmin is None:
-        vmin = grid_z.min()
-    if vmax is None:
-        vmax = grid_z.max()
+    # Standardize grid_z using Z-score
+    grid_z_mean = np.nanmean(grid_z)  # Calculate the mean ignoring NaNs
+    grid_z_std = np.nanstd(grid_z)    # Calculate the standard deviation ignoring NaNs
+    grid_z = (grid_z - grid_z_mean) / grid_z_std  # Z-score standardization
 
-    contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=0.5, colors='k', vmin=vmin, vmax=vmax)
-    ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=plt.get_cmap(contour_cmap), alpha=0.5, vmin=vmin, vmax=vmax)
+    if vmin is None and vmax is None:
+        contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color) #, vmin=vmin, vmax=vmax)
+        ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha) #, vmin=vmin, vmax=vmax)
+    else:
+        contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color, vmin = vmin, vmax = vmax) #, vmin=vmin, vmax=vmax)
+        ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha, vmin = vmin, vmax = vmax) #, vmin=vmin, vmax=vmax)
 
-    ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
+    
+
+    if value_lable == True:
+        ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
 
 
 
