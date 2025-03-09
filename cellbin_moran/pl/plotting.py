@@ -860,6 +860,198 @@ def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None,
         ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
 
 
+def generate_contour_figures(adatas, output_dir, value_column="gyj_score", date_str="feb23",
+                               contour_cmap="Reds", scatter_hue_key="plaque", 
+                               scalebar_length_um=1000, units_per_um=2, scalebar_label='1000 μm',
+                               contour_levels=10, contour_sigma=1.0, contour_padding=0.05, 
+                               contour_alpha=0.5, contour_line_color="white", contour_line_width=1,
+                               label_contours=False, show_plot_interval=6, keep_non_zero=False):
+    """
+    Generate contour figures from spatial data in `adatas` and save them as PDFs.
+    
+    Parameters:
+        adatas (dict): Dictionary where keys map to data objects (e.g., AnnData) with an `.obs`
+                       DataFrame containing spatial coordinates ("x", "y") and a value column.
+        output_dir (str): Directory where output PDF files will be saved.
+        value_column (str): Name of the column in adata.obs to be used for contouring (default "gyj_score").
+        date_str (str): String to include in the filename (e.g., a date identifier).
+        contour_cmap (str): Colormap to use for filled contours (default "Reds").
+        scatter_hue_key (str): Column name used for coloring scatterplot when applicable.
+        scalebar_length_um (float): Length of the scalebar in micrometers.
+        units_per_um (float): Number of plot units per micrometer for the scalebar.
+        scalebar_label (str): Label for the scalebar.
+        contour_levels (int): Number of contour levels.
+        contour_sigma (float): Sigma (standard deviation) for the Gaussian filter.
+        contour_padding (float): Fractional padding around the data for grid creation.
+        contour_alpha (float): Transparency for filled contours.
+        contour_line_color (str): Color of contour lines.
+        contour_line_width (float): Width of contour lines.
+        label_contours (bool): Whether to add labels to the contour lines.
+        show_plot_interval (int): Show the plot every `show_plot_interval` iterations (for interactive sessions).
+        keep_non_zero (bool): Whether to keep non-zero values for colorbar limits.
+    
+    Returns:
+        None. Figures are saved to the specified output directory.
+    """
+    import os
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    from scipy.spatial import cKDTree
+    from scipy.ndimage import gaussian_filter
+    from scipy.interpolate import griddata
+    import seaborn as sns
+    from tqdm import tqdm
+
+    # Define helper functions
+    def add_scalebar(ax, length_μm, units_per_μm, label='1000 μm', **kwargs):
+        length_units = length_μm * units_per_um
+        xlim = ax.get_xlim()
+        ylim = ax.get_ylim()
+        
+        xpos = xlim[0] + (xlim[1] - xlim[0]) * 0.8
+        ypos = ylim[0] + (ylim[1] - ylim[0]) * 0.9
+        
+        scalebar = patches.Rectangle((xpos, ypos), length_units, (ylim[1] - ylim[0]) * 0.01,
+                                     linewidth=1, edgecolor='black', facecolor='black', **kwargs)
+        ax.add_patch(scalebar)
+        
+        ax.text(xpos + length_units / 2, ypos + (ylim[1] - ylim[0]) * 0.02, label,
+                color='black', ha='center', va='bottom', fontsize=10)
+    
+    def filter_grid(grid_z, obs, grid_points_coords):
+        original_points = np.c_[obs['x'].values, obs['y'].values]
+        tree = cKDTree(grid_points_coords)
+        distances, indices = tree.query(original_points)
+        inx_unique = np.array(list(set(indices)))
+        grid_z_flat = grid_z.flatten()
+        mask = np.zeros(shape=len(grid_z_flat), dtype=bool)
+        mask[inx_unique] = True
+        grid_z_flat[~mask] = -np.pi
+        return grid_z_flat.reshape(grid_z.shape)
+    
+    def add_contours(ax, obs, value_column, contour_cmap, levels=10, vmin=None, vmax=None,
+                     sigma=1.0, padding=0.05, scatter=False, alpha=0.5, 
+                     line_color="white", line_width=1, value_lable=False):
+        x_pad = padding * (obs['x'].max() - obs['x'].min())
+        y_pad = padding * (obs['y'].max() - obs['y'].min())
+    
+        grid_x, grid_y = np.mgrid[(obs['x'].min() - x_pad):(obs['x'].max() + x_pad):150j, 
+                                  (obs['y'].min() - y_pad):(obs['y'].max() + y_pad):150j]
+        grid_points = np.c_[grid_x.ravel(), grid_y.ravel()]
+    
+        scaled_values = obs[value_column]
+    
+        grid_z = griddata((obs['x'], obs['y']), scaled_values, (grid_x, grid_y), method='nearest')
+    
+        grid_z_fil = filter_grid(grid_z, obs, grid_points)
+    
+        # Record positions of 0 values in grid_z_fil
+        zero_positions = np.where(grid_z_fil == -np.pi)
+        
+        grid_z = gaussian_filter(grid_z_fil, sigma=sigma)
+        
+        # Reset the 0 positions back to 0
+        grid_z[zero_positions] = None
+    
+        # Standardize grid_z using Z-score
+        grid_z_mean = np.nanmean(grid_z)
+        grid_z_std = np.nanstd(grid_z)
+        grid_z = (grid_z - grid_z_mean) / grid_z_std
+    
+        if vmin is None and vmax is None:
+            contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color)
+            ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha)
+        else:
+            contours = ax.contour(grid_x, grid_y, grid_z, levels=levels, linewidths=line_width, colors=line_color, vmin=vmin, vmax=vmax)
+            ax.contourf(grid_x, grid_y, grid_z, levels=levels, cmap=contour_cmap, alpha=alpha, vmin=vmin, vmax=vmax)
+    
+        if value_lable:
+            ax.clabel(contours, inline=True, fontsize=8, fmt='%1.1f')
+    
+    def get_colorbar_limits(df, col_name, keep_non_zero=keep_non_zero):
+        if col_name not in df.columns:
+            raise ValueError(f"Column '{col_name}' not found in DataFrame.")
+        if not pd.api.types.is_numeric_dtype(df[col_name]):
+            raise ValueError(f"Column '{col_name}' must be numeric.")
+        data = df[col_name].dropna()
+
+        if keep_non_zero:
+            data = data[data != 0]
+            
+        lower_limit = np.percentile(data, 1)
+        upper_limit = np.percentile(data, 99)
+    
+        plt.figure(figsize=(10, 6))
+        plt.hist(data, bins=500, density=True, alpha=0.7, color='blue', label='Data distribution')
+        plt.axvline(lower_limit, color='red', linestyle='dashed', linewidth=2, label='Lower limit (1%)')
+        plt.axvline(upper_limit, color='green', linestyle='dashed', linewidth=2, label='Upper limit (99%)')
+        plt.axvspan(data.min(), lower_limit, alpha=0.2, color='red')
+        plt.axvspan(upper_limit, data.max(), alpha=0.2, color='green')
+        plt.xlabel(col_name)
+        plt.ylabel('Density')
+        plt.title(f'Histogram of {col_name} with Color Bar Limits')
+        plt.legend()
+        plt.show()
+    
+        return lower_limit, upper_limit
+
+    # Ensure output directory exists
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # Combine scores from all adatas to compute robust colorbar limits
+    score_series = []
+    for key, adata in adatas.items():
+        if value_column in adata.obs.columns:
+            score_series.append(adata.obs[value_column])
+        else:
+            raise ValueError(f"Value column '{value_column}' not found in adata.obs for key {key}.")
+    score_df = pd.concat(score_series).reset_index(drop=True)
+    
+    # Get the robust colorbar limits (1st and 99th percentiles)
+    vmin, vmax = get_colorbar_limits(score_df.to_frame(name=value_column), value_column)
+    
+    i = 1
+    for key, adata in tqdm(adatas.items()):
+        fig_path = os.path.join(output_dir, f"{key}_{value_column}_{date_str}.pdf")
+        if os.path.exists(fig_path):
+            print(f"File {fig_path} exists, skipping figure.")
+            continue
+    
+        print(f"Processing {key}...")
+        df = adata.obs.copy()
+    
+        fig, ax = plt.subplots(figsize=(10, 10))
+        # If key contains "HZ" and the hue column exists, use it for a colored scatter plot.
+        if "HZ" in key and scatter_hue_key in df.columns:
+            try:
+                sns.scatterplot(data=df, x="x", y="y", hue=scatter_hue_key, linewidth=0,
+                                palette={True: "blue", False: "lightgrey"}, s=12, ax=ax)
+            except Exception as exc:
+                print(f"{key} failed with scatterplot using hue: {exc}")
+        else:
+            sns.scatterplot(data=df, x="x", y="y", color="lightgrey", linewidth=0, s=12, ax=ax)
+    
+        try:
+            add_contours(ax=ax, obs=df, value_column=value_column, contour_cmap=contour_cmap,
+                         levels=contour_levels, vmin=vmin, vmax=vmax, sigma=contour_sigma,
+                         padding=contour_padding, alpha=contour_alpha, line_color=contour_line_color,
+                         line_width=contour_line_width, value_lable=label_contours)
+            add_scalebar(ax, length_μm=scalebar_length_um, units_per_μm=units_per_um, label=scalebar_label)
+        except Exception as exc:
+            print(f"{key} failed during contour or scalebar addition: {exc}")
+    
+        ax.set_aspect("equal")
+        ax.grid(False)
+        plt.title(f"{key} - {value_column}")
+        plt.savefig(fig_path, dpi=300)
+        if i % show_plot_interval == 1:
+            plt.show()
+        else:
+            plt.close()
+        i += 1
 
 
 
